@@ -39,7 +39,7 @@ type Strategy struct {
 	peak       float64
 	valley     float64
 	position   string
-	equity     []float64
+	Equity     []float64
 	openprofit []float64
 	drawdown   []float64
 	buystop    []float64
@@ -54,7 +54,7 @@ func NewStrategy(p quote.Quote, script string) Strategy {
 	s.Script = script
 	s.Price = p
 	s.Barcount = len(p.Close)
-	s.equity = make([]float64, s.Barcount)
+	s.Equity = make([]float64, s.Barcount)
 	s.Balance = make([]float64, s.Barcount)
 	s.openprofit = make([]float64, s.Barcount)
 	s.drawdown = make([]float64, s.Barcount)
@@ -97,6 +97,7 @@ func (s *Strategy) Backtest(params []float64) float64 {
 	env.Define("Ema", talib.Ema)
 	env.Define("Atr", talib.Atr)
 	env.Define("Balance", s.Balance)
+	env.Define("Equity", s.Equity)
 	env.Define("StartCash", s.Startcash)
 	env.Define("StarBar", s.Startbar)
 	env.Define("Units", s.Units)
@@ -113,16 +114,16 @@ func (s *Strategy) Backtest(params []float64) float64 {
 	v, _ = env.Get("StartBar")
 	s.Startbar = int(v.Int())
 
-	for bar := s.Startbar; bar < s.Barcount-1; bar++ {
-		s.Evaluate(bar)
-		if bar > s.Startbar {
-			env.Set("Bar", bar)
+	for s.bar = 0; s.bar < s.Barcount-1; s.bar++ {
+		s.Evaluate()
+		if s.bar > s.Startbar {
+			env.Set("Bar", s.bar)
 			_, err := env.Execute("run()")
 			if err != nil {
 				panic(err)
 			}
 			v, err := env.Get("Units")
-			s.Units = int(v.Int())
+			s.Units = int(v.Float())
 		}
 	}
 	s.ClosePosition()
@@ -131,10 +132,10 @@ func (s *Strategy) Backtest(params []float64) float64 {
 }
 
 // Evaluate -
-func (s *Strategy) Evaluate(bar int) {
+func (s *Strategy) Evaluate() {
 
-	s.bar = bar
-	if bar > 0 {
+	bar := s.bar
+	if s.bar > 0 {
 		s.Balance[s.bar] = s.Balance[s.bar-1]
 	}
 
@@ -146,7 +147,7 @@ func (s *Strategy) Evaluate(bar int) {
 	}
 
 	// check if short protective stop was hit
-	if s.position == "short" && s.Price.High[bar] > s.coverstop[bar] {
+	if s.position == "short" && s.coverstop[bar] > 0 && s.Price.High[bar] > s.coverstop[bar] {
 		bestprice := math.Max(s.Price.Open[bar], s.coverstop[bar])
 		fillprice := s.skidfunction(bestprice, s.Price.High[bar])
 		s.ExitTrade(s.Price.Date[bar], fillprice)
@@ -178,18 +179,18 @@ func (s *Strategy) Evaluate(bar int) {
 		}
 	}
 
-	s.equity[s.bar] = s.Balance[s.bar] + s.openprofit[s.bar]
+	s.Equity[s.bar] = s.Balance[s.bar] + s.openprofit[s.bar]
 
 	// calculate drawdown
 	if s.bar == 0 {
 		s.peak = s.Balance[0]
 		s.valley = s.Balance[0]
 	}
-	if s.equity[s.bar] > s.peak {
-		s.peak = s.equity[s.bar]
+	if s.Equity[s.bar] > s.peak {
+		s.peak = s.Equity[s.bar]
 	}
-	if s.equity[s.bar] < s.valley {
-		s.valley = s.equity[s.bar]
+	if s.Equity[s.bar] < s.valley {
+		s.valley = s.Equity[s.bar]
 	}
 	retrace := s.peak - s.valley
 	if retrace > 0 {
@@ -318,7 +319,7 @@ func (s *Strategy) ClosePosition() {
 	}
 	s.ExitTrade(s.Price.Date[s.bar], fillprice)
 	s.openprofit[s.bar] = 0
-	s.equity[s.bar] = s.Balance[s.bar]
+	s.Equity[s.bar] = s.Balance[s.bar]
 }
 
 // Icagr -
@@ -358,8 +359,8 @@ func (s *Strategy) Bliss() float64 {
 // Summary -
 func (s *Strategy) Summary() {
 	fmt.Printf("fitness=%f\n", s.Bliss())
+	s.EquityLog()
 	s.TradeLog()
-	//s.EquityLog()
 	//s.PriceLog()
 }
 
@@ -382,7 +383,7 @@ func (s *Strategy) EquityLog() {
 			s.Price.Date[n].Format("2006-01-02"),
 			s.Balance[n],
 			s.openprofit[n],
-			s.equity[n])
+			s.Equity[n])
 	}
 }
 
