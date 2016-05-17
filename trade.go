@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"github.com/markcheno/go-quote"
 	"github.com/markcheno/go-talib"
+	anko_core "github.com/mattn/anko/builtins"
 	"github.com/mattn/anko/vm"
 	"math"
+	"os"
 	"time"
 )
 
@@ -27,7 +29,7 @@ type Strategy struct {
 	Script     string
 	Runtime    time.Duration
 	Startbar   int
-	Units      int
+	Units      float64
 	Roundlot   int
 	Startcash  float64
 	Skidfrac   float64
@@ -46,6 +48,7 @@ type Strategy struct {
 	sellstop   []float64
 	shortstop  []float64
 	coverstop  []float64
+	env        *vm.Env
 }
 
 // NewStrategy -
@@ -62,15 +65,19 @@ func NewStrategy(p quote.Quote, script string) Strategy {
 	s.sellstop = make([]float64, s.Barcount)
 	s.shortstop = make([]float64, s.Barcount)
 	s.coverstop = make([]float64, s.Barcount)
-	s.Startcash = 100000.0
+	s.Startcash = 1000000.0
 	s.Balance[0] = s.Startcash
-	s.Skidfrac = 0
+	s.Skidfrac = 0.5
 	s.Startbar = 0
 	s.maxdd = 0.99
-	s.Roundlot = 1
-	s.Units = 100
+	s.Roundlot = 250
 	s.position = "flat"
 	return s
+}
+
+// SetUnits -
+func (s *Strategy) SetUnits(units float64) {
+	s.Units = units
 }
 
 // Backtest -
@@ -79,53 +86,60 @@ func (s *Strategy) Backtest(params []float64) float64 {
 	starttime := time.Now()
 	s.Balance[0] = s.Startcash
 
-	env := vm.NewEnv()
+	s.env = vm.NewEnv()
 
-	env.Define("printf", fmt.Printf)
-	env.Define("println", fmt.Println)
-	env.Define("Bar", s.bar)
-	env.Define("Open", s.Price.Open)
-	env.Define("High", s.Price.High)
-	env.Define("Low", s.Price.Low)
-	env.Define("Close", s.Price.Close)
-	env.Define("Volume", s.Price.Volume)
-	env.Define("Date", s.Price.Date)
-	env.Define("BuyOpen", s.BuyOpen)
-	env.Define("SellOpen", s.SellOpen)
-	env.Define("ShortOpen", s.ShortOpen)
-	env.Define("CoverOpen", s.CoverOpen)
-	env.Define("Ema", talib.Ema)
-	env.Define("Atr", talib.Atr)
-	env.Define("Balance", s.Balance)
-	env.Define("Equity", s.Equity)
-	env.Define("StartCash", s.Startcash)
-	env.Define("StarBar", s.Startbar)
-	env.Define("Units", s.Units)
-	env.Define("Params", params)
-	_, err := env.Execute(s.Script)
+	anko_core.Import(s.env)
+
+	//env.Define("printf", fmt.Printf)
+	//env.Define("println", fmt.Println)
+	s.env.Define("Bar", s.bar)
+	s.env.Define("Open", s.Price.Open)
+	s.env.Define("High", s.Price.High)
+	s.env.Define("Low", s.Price.Low)
+	s.env.Define("Close", s.Price.Close)
+	s.env.Define("Volume", s.Price.Volume)
+	s.env.Define("Date", s.Price.Date)
+	s.env.Define("BuyOpen", s.BuyOpen)
+	s.env.Define("SellOpen", s.SellOpen)
+	s.env.Define("ShortOpen", s.ShortOpen)
+	s.env.Define("CoverOpen", s.CoverOpen)
+	s.env.Define("Ema", talib.Ema)
+	s.env.Define("Atr", talib.Atr)
+	s.env.Define("Balance", s.Balance)
+	s.env.Define("Equity", s.Equity)
+	s.env.Define("StartCash", s.Startcash)
+	s.env.Define("StarBar", s.Startbar)
+	s.env.Define("Units", s.Units)
+	s.env.Define("SetUnits", s.SetUnits)
+	s.env.Define("Params", params)
+	s.env.Define("Max", math.Max)
+	_, err := s.env.Execute(s.Script)
 	if err != nil {
 		panic(err)
 	}
 
-	v, _ := env.Get("StartCash")
+	v, _ := s.env.Get("StartCash")
 	s.Startcash = v.Float()
 	s.Balance[0] = s.Startcash
 
-	v, _ = env.Get("StartBar")
+	v, _ = s.env.Get("StartBar")
 	s.Startbar = int(v.Int())
 
 	for s.bar = 0; s.bar < s.Barcount-1; s.bar++ {
 		s.Evaluate()
-		if s.bar > s.Startbar {
-			env.Set("Bar", s.bar)
-			_, err := env.Execute("run()")
+		if s.bar >= s.Startbar {
+
+			s.env.Set("Bar", s.bar)
+			_, err := s.env.Execute("run()")
 			if err != nil {
-				panic(err)
+				fmt.Println(err.Error()[9:])
+				os.Exit(0)
 			}
-			v, err := env.Get("Units")
-			s.Units = int(v.Float())
+
 		}
 	}
+
+	//s.ExitTrade(s.Price.Date[s.Barcount-1], s.Price.Close[s.Barcount-1])
 	s.ClosePosition()
 	s.Runtime = time.Since(starttime)
 	return s.Bliss()
@@ -228,11 +242,12 @@ func (s *Strategy) ExitTrade(date time.Time, exitprice float64) {
 }
 
 // EnterTrade -
-func (s *Strategy) EnterTrade(kind string, symbol string, units int, entrydate time.Time, entryprice float64) {
+func (s *Strategy) EnterTrade(kind string, symbol string, units float64, entrydate time.Time, entryprice float64) {
+
 	t := Trade{
 		Symbol:     symbol,
 		Kind:       kind,
-		Units:      s.roundunits(float64(units)),
+		Units:      s.roundunits(units),
 		EntryDate:  entrydate,
 		EntryPrice: entryprice,
 		ExitDate:   entrydate,
@@ -244,7 +259,7 @@ func (s *Strategy) EnterTrade(kind string, symbol string, units int, entrydate t
 }
 
 func (s *Strategy) roundunits(units float64) int {
-	return s.Roundlot * int((units+0.0001)/(float64(s.Roundlot)+0.5))
+	return s.Roundlot * int((units+0.0001)/float64(s.Roundlot)+0.5)
 }
 
 // BuyOpen -
@@ -358,10 +373,10 @@ func (s *Strategy) Bliss() float64 {
 
 // Summary -
 func (s *Strategy) Summary() {
-	fmt.Printf("fitness=%f\n", s.Bliss())
 	s.EquityLog()
 	s.TradeLog()
 	//s.PriceLog()
+	fmt.Printf("Bliss=%f, Icagr=%f, DD=%f\n", s.Bliss(), s.Icagr(), s.DrawDown())
 }
 
 // PriceLog -
