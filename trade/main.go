@@ -12,35 +12,34 @@ func main() {
 
 	script := `
 	
-func LAG(p,period) {	
-  lag = make([]float64,len(p))
+func LAG(price,period) {	
+  lag = make([]float64,len(price))
   multiplier = 2.0 / (1.0 + period)
-  lag[0] = p[0]
-  for x = 1; x < len(p); x++ {
-		lag[x] = ( (p[x] - lag[x-1]) * multiplier) + lag[x-1]
+  lag[0] = price[0]
+  for x = 1; x < len(price); x++ {
+		lag[x] = ( (price[x] - lag[x-1]) * multiplier) + lag[x-1]
 	}
   return lag
 }
 
-func ATR(period) {
-  tr  = make([]float64,len(Close))
-  tr[0] = High[0] - Low[0]
-  for x = 1; x < len(Close); x++ {
-    tr1 = High[x] - Low[x]
-    tr2 = High[x] - Close[x-1]
-    tr3 = Close[x-1] - Low[x]
-		tmp = Max(tr1,tr2)
-    tr[x] = Max(tmp,tr3)
+func ATR(high,low,close,period) {
+  tr  = make([]float64,len(close))
+  tr[0] = high[0] - low[0]
+  for x = 1; x < len(close); x++ {
+    tr1 = high[x] - low[x]
+    tr2 = high[x] - close[x-1]
+    tr3 = close[x-1] - low[x]
+    tr[x] = Max(Max(tr1,tr2),tr3)
 	}
   atr = LAG(tr,period)
   return atr
 }
 
-emafast = LAG(Close,15.0)
-emaslow = LAG(Close,150.0)
-atr = ATR(20)
-atrmult = 5
-heat = 0.1
+emafast = LAG(Close,Params[0])
+emaslow = LAG(Close,Params[1])
+atr = ATR(High,Low,Close,Params[2])
+atrmult = Params[3]
+heat = Params[4]
 StartCash = 1000000.0
 StartBar = 25
 
@@ -62,8 +61,7 @@ func run() {
 	}
 }
 `
-	params := []float64{15, 150}
-
+	params := []float64{15, 150, 20, 5, 0.1}
 	strategy := trade.NewStrategy(prices, script)
 	strategy.Backtest(params)
 	strategy.Summary()

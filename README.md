@@ -1,2 +1,2 @@
 # go-tradesim
-A simple, event based trading system simulator
+A simple trading system simulator
